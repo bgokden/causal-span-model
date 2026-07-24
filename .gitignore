@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Data and model artifacts (fetched / produced by the pipeline, not versioned)
+data/
+outputs/
+*.jsonl
+*.csv
+*.onnx
+
+# Throwaway run logs / scratch metrics
+tmp_*.log
+tmp_*.txt
+
+# Fetched third-party CNC scorer + data + scratch scoring outputs (reproducible)
+cnc_eval/
+
+# This project uses hatchling + pip (.venv), not uv
+uv.lock
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
