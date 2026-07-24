@@ -88,11 +88,21 @@ def predict_relations(model, tokenizer, text: str, max_len: int = 256,
         effect = slice_span(rel["effect"])
         if not cause or not effect:
             continue
-        # Drop near-duplicates from beam top-2: same cause and one effect nested in
-        # the other (a single-relation sentence yielding two boundary variants).
-        if any(k["cause"].lower() == cause.lower()
-               and (effect.lower() in k["effect"].lower() or k["effect"].lower() in effect.lower())
-               for k in relations):
+        # Drop beam duplicates. Two kinds arise on single-relation sentences:
+        #  - near-dup: same cause, one effect nested in the other (boundary variant)
+        #  - flip: a role-swap / direction reversal (this cause == a kept effect and
+        #    this effect == that kept cause). Beam returns score-ordered, so the
+        #    first (higher-scoring) reading is kept and the reversal dropped.
+        cl, el = cause.lower(), effect.lower()
+        dup = False
+        for keep in relations:
+            kc, ke = keep["cause"].lower(), keep["effect"].lower()
+            near = kc == cl and (el in ke or ke in el)
+            flip = kc == el and ke == cl
+            if near or flip:
+                dup = True
+                break
+        if dup:
             continue
         relations.append({"cause": cause, "effect": effect, "signal": slice_span(rel["signal"])})
     return relations
