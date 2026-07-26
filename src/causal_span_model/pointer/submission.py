@@ -32,6 +32,10 @@ def load_pointer(model_dir: str):
     model = PointerCausalModel(cfg["base_model"], cfg.get("dropout", 0.1))
     state = torch.load(os.path.join(model_dir, "pytorch_model.bin"), map_location="cpu")
     model.load_state_dict(state)
+    # Checkpoints are saved in half precision (bf16 training). Cast to fp32 so
+    # inference runs consistently on CPU, where mixing half weights with the
+    # fp32-loaded base encoder raises "mat1 and mat2 must have the same dtype".
+    model.float()
     model.eval()
     return model, tokenizer
 
