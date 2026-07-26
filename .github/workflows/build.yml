@@ -1,0 +1,30 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Validate the lean base import (no heavy deps)
+        # __init__ is stdlib-only, so a --no-deps install must import cleanly.
+        # This guards the inference-lean packaging promise reasongraph relies on.
+        run: |
+          python -m pip install --no-deps dist/*.whl
+          python -c "import causal_span_model; print(causal_span_model.LABELS)"

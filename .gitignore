@@ -18,6 +18,7 @@ outputs/
 # Throwaway run logs / scratch metrics
 tmp_*.log
 tmp_*.txt
+tmp/
 
 # Fetched third-party CNC scorer + data + scratch scoring outputs (reproducible)
 cnc_eval/

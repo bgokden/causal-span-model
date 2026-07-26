@@ -11,11 +11,16 @@ import json
 import os
 import sys
 
-import pandas as pd
 import torch
 
 from causal_span_model.pointer.decode import decode_relations
 from causal_span_model.pointer.model import PointerCausalModel
+
+# Canonical Hugging Face repo for the published pointer model. Single source of
+# truth: the push target, the model card, and downstream consumers (reasongraph's
+# CausalPointerExtractor default) all reference this exact id so they cannot drift.
+# Distinct from the BIO tagger's repo (causal-span-mdeberta).
+POINTER_HF_REPO = "berk/causal-span-pointer-mdeberta"
 
 
 def load_pointer(model_dir: str):
@@ -77,6 +82,8 @@ def main(argv=None):
     parser.add_argument("--max-len", type=int, default=256)
     parser.add_argument("--topk", type=int, default=5)
     args = parser.parse_args(argv)
+
+    import pandas as pd  # CLI-only (submission scoring); kept out of the inference import path
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model, tokenizer = load_pointer(args.model_dir)

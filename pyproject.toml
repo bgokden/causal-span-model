@@ -22,24 +22,33 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+# Base install is inference-only (what reasongraph consumes): the pointer model
+# loads and predicts with just torch + transformers (sentencepiece/protobuf are the
+# mDeBERTa tokenizer runtime deps). Training/eval/export pull heavier packages via
+# the extras below, so `pip install causal-span-model` stays lean.
 dependencies = [
     "transformers>=4.44",
     "torch>=2.1",
-    "datasets>=2.14",
-    "seqeval>=1.2",
     "sentencepiece>=0.1.99",
     "protobuf>=4.21",
-    "accelerate>=0.26",
     "numpy>=1.24",
 ]
 
 [project.optional-dependencies]
+# Training, dataset prep, and submission/eval scoring.
+train = [
+    "datasets>=2.14",
+    "seqeval>=1.2",
+    "accelerate>=0.26",
+    "pandas>=2.0",
+]
 onnx = [
     "optimum[onnxruntime]>=1.17",
     "onnx>=1.15",
     "onnxruntime>=1.17",
 ]
 dev = [
+    "causal-span-model[train,onnx]",
     "pytest>=7.4",
 ]
 
@@ -57,6 +66,11 @@ causal-pointer-submit = "causal_span_model.pointer.submission:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/causal_span_model"]
+
+[tool.hatch.build.targets.sdist]
+# Ship the package, tests, and metadata only -- keep scratch (tmp/), local run
+# scripts, and CI config out of the published source distribution.
+include = ["src", "tests", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
