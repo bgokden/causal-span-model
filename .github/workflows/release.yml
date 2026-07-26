@@ -1,24 +1,22 @@
 name: Release
 
-# Publishes to PyPI when a version tag is pushed, e.g.:
-#   git tag v0.1.0 && git push origin v0.1.0
+# Publishes to PyPI. Manual and main-only: from the Actions tab, run "Release"
+# with the `main` branch selected. The job targets the `pypi` environment (whose
+# "protected branches only" policy plus the main-only guard below means only main
+# can deploy) and reads the PYPI_API_TOKEN secret from that environment.
 #
-# Requires a repository secret PYPI_API_TOKEN (a PyPI API token scoped to this
-# project, or account-wide for the first release). Create it at
-# https://pypi.org/manage/account/token/ and add it under
-# Settings -> Secrets and variables -> Actions.
-#
-# Alternative: PyPI Trusted Publishing (OIDC, no secret) -- drop `with.password`
-# below and configure a trusted publisher for this repo on PyPI instead.
+# The published version is whatever is in pyproject.toml -- bump it on main before
+# running. Tag-triggered releases are intentionally not used: a tag ref is not a
+# branch, so it cannot satisfy the environment's protected-branches policy.
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: pypi
     steps:
       - uses: actions/checkout@v4
 
