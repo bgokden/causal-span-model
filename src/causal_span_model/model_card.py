@@ -126,7 +126,7 @@ def _read_metrics(path: str | None) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model_dir")
-    parser.add_argument("repo_id", help="e.g. berkgokden/causal-span-mdeberta")
+    parser.add_argument("repo_id", help="e.g. berk/causal-span-mdeberta")
     parser.add_argument("--base-model", default="microsoft/mdeberta-v3-base")
     parser.add_argument("--metrics-file", default=None,
                         help="text file whose contents become the Evaluation block")

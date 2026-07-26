@@ -117,6 +117,24 @@ Official scorer (FairEval + best-combination), V2 dev:
 It beats the 0.627 baseline (Cause 0.74 / Effect 0.69 / Signal 0.65; multi-relation
 F1 0.52 via beam top-2). Augmented data was tried and hurt (0.675), so it is unused.
 
+### vs a few-shot LLM
+
+Would a prompted general LLM beat the fine-tune? No. Qwen2.5-7B-Instruct, few-shot on
+the same dev set and official scorer:
+
+| Approach | Official F1 |
+|---|---|
+| LLM few-shot, plain causal prompt | 0.24 |
+| LLM few-shot, scheme-aware prompt | 0.41 |
+| **Pointer model** | **0.70** |
+
+The plain LLM under-detects CNC's broad causality (purpose/motive/implicit are all
+labelled causal); a scheme-aware prompt lifts detection but partly by over-flagging
+non-causal sentences, which the scorer ignores. On a capability-fair subset (causality
+a reader recognises without CNC's scheme) the gap narrows to ~0.45 (LLM) vs ~0.63
+(pointer) -- the residual is exact span-boundary precision, which is what fine-tuning
+on the annotation buys.
+
 ```bash
 causal-pointer-train --train data/cnc_train_subtask2.csv --dev data/cnc_dev_subtask2.csv \
                      --output-dir outputs/pointer-mdeberta --epochs 10 --lr 3e-5

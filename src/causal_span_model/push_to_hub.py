@@ -42,7 +42,7 @@ def push(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model_dir")
-    parser.add_argument("repo_id", help="e.g. berkgokden/causal-span-mdeberta")
+    parser.add_argument("repo_id", help="e.g. berk/causal-span-mdeberta")
     parser.add_argument("--public", action="store_true",
                         help="make the repo public (default: private)")
     parser.add_argument("--token", default=None, help="HF token (else uses cached login)")

@@ -10,6 +10,8 @@ import argparse
 import os
 import sys
 
+from causal_span_model.pointer.submission import POINTER_HF_REPO
+
 _CARD = """---
 license: mit
 base_model: microsoft/mdeberta-v3-base
@@ -50,6 +52,15 @@ Official scorer (`evaluation/subtask2`: FairEval + best-combination alignment), 
 
 **This beats the organizer's 0.627 dev baseline** and the 2022 shared-task winner
 (0.542, test); it trails the 2023 winner (0.728, test). Same scorer, same dev set.
+
+### vs a few-shot LLM
+
+A prompted general LLM does not match this fine-tune. Qwen2.5-7B-Instruct, few-shot on
+the same dev set and official scorer, scores **0.24** F1 with a plain causal prompt and
+**0.41** with a scheme-aware prompt (vs **0.70** here). Even on a capability-fair subset
+-- causality a reader recognises without CNC's broad purpose/motive/implicit
+conventions -- the LLM reaches ~0.45 vs this model's ~0.63. The residual gap is exact
+span-boundary precision, which fine-tuning on the annotation provides.
 
 ## Usage
 
@@ -119,7 +130,8 @@ def write_card(model_dir: str, repo_id: str, metrics: str) -> str:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model_dir")
-    parser.add_argument("repo_id")
+    parser.add_argument("repo_id", nargs="?", default=POINTER_HF_REPO,
+                        help=f"HF repo id (default: {POINTER_HF_REPO})")
     parser.add_argument("--metrics-file", default=None)
     args = parser.parse_args(argv)
     metrics = "_(metrics pending)_"
