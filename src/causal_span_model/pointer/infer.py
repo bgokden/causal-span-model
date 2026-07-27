@@ -14,6 +14,31 @@ import torch
 
 from causal_span_model.pointer.decode import decode_relations
 
+# Sentence punctuation and whitespace stripped from reconstructed span edges only.
+_SPAN_EDGE = " \t\n\r.,;:!?"
+
+
+def _trim_signal(span, signal):
+    """Exclude the connective from an argument's boundary (consumer-side cleanup).
+
+    The signal (e.g. "caused", "because") is reported separately, but the shared
+    decoder may hand back an argument that starts or ends ON the connective
+    (effect = "caused severe flooding"). Downstream users like reasongraph want the
+    argument alone, so move the boundary past a leading/trailing signal overlap. An
+    interior/nested signal (strictly inside the span) is left untouched. This runs
+    only in this inference path, NOT in the CNC submission decoder, whose gold
+    tolerates the connective and would otherwise lose F1.
+    """
+    if span is None or signal is None:
+        return span
+    s, e = span
+    sig_s, sig_e = signal
+    if sig_s <= s <= sig_e:      # argument starts within the signal -> start after it
+        s = sig_e + 1
+    if sig_s <= e <= sig_e:      # argument ends within the signal -> end before it
+        e = sig_s - 1
+    return (s, e) if s <= e else span
+
 
 def _is_cjk(ch: str) -> bool:
     return (
@@ -80,12 +105,15 @@ def predict_relations(model, tokenizer, text: str, max_len: int = 256,
         start_word, end_word = word_ids[span[0]], word_ids[span[1]]
         if start_word is None or end_word is None:
             return ""
-        return text[segments[start_word][1]:segments[end_word][2]].strip()
+        # Whitespace segmentation attaches trailing punctuation to a word
+        # ("flooding."), so strip sentence punctuation from the span edges -- gold
+        # ARG spans exclude it. Only edge characters are removed; interior stays.
+        return text[segments[start_word][1]:segments[end_word][2]].strip(_SPAN_EDGE)
 
     relations: list[dict] = []
     for rel in decoded:
-        cause = slice_span(rel["cause"])
-        effect = slice_span(rel["effect"])
+        cause = slice_span(_trim_signal(rel["cause"], rel["signal"]))
+        effect = slice_span(_trim_signal(rel["effect"], rel["signal"]))
         if not cause or not effect:
             continue
         # Drop beam duplicates. Two kinds arise on single-relation sentences:

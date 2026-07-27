@@ -109,7 +109,13 @@ def decode_signal(sig_start, sig_end, sep_pos: int, max_span: int = 5):
 
 def decode_relations(logits: dict, sep_pos: int, has_signal: bool,
                      beam: bool = True, topk: int = 5) -> list[dict]:
-    """Return a list of relations; each is {'cause': (s,e), 'effect': (s,e), 'signal': (s,e)|None}."""
+    """Return a list of relations; each is {'cause': (s,e), 'effect': (s,e), 'signal': (s,e)|None}.
+
+    Arguments are returned exactly as the model decodes them (this feeds the CNC
+    submission scorer, whose gold tolerates a connective inside an argument, so no
+    boundary cleanup is applied here). Downstream consumers that want connective-free
+    spans post-process in ``infer.predict_relations``.
+    """
     cs = _prep(logits["cause_start"], sep_pos)
     ce = _prep(logits["cause_end"], sep_pos)
     es = _prep(logits["effect_start"], sep_pos)
