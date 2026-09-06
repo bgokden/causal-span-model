@@ -41,11 +41,15 @@ SIGNALS = {
     "en": ["because of", "because", "due to", "as a result of", "as a result", "led to", "leads to",
            "caused", "causes", "resulted in", "results in", "so that", "so", "therefore", "thanks to",
            "owing to", "triggered", "forced", "since", "hence", "consequently", "in order to", "after"],
-    "de": ["weil", "wegen", "aufgrund", "führte zu", "führt zu", "verursachte", "deshalb", "daher", "sodass", "infolge"],
-    "nl": ["omdat", "door", "vanwege", "leidde tot", "leidt tot", "veroorzaakte", "daardoor", "dus", "waardoor"],
+    "de": ["weil", "wegen", "aufgrund", "führte zum", "führte zur", "führten zum", "führten zur", "führte zu",
+           "führt zu", "verursachte", "verursachten", "resultierte aus", "resultierten aus", "kam es zur",
+           "kam es zum", "durch", "deshalb", "daher", "sodass", "infolge", "bedingt durch", "löste", "lösten"],
+    "nl": ["omdat", "door", "vanwege", "leidde tot", "leidt tot", "leidden tot", "veroorzaakte", "veroorzaakten",
+           "daardoor", "dus", "waardoor", "als gevolg van", "zorgde voor", "zorgden voor"],
     "es": ["porque", "debido a", "a causa de", "provocó", "causó", "llevó a", "por lo que", "así que", "gracias a"],
     "fr": ["parce que", "à cause de", "en raison de", "a provoqué", "a entraîné", "donc", "grâce à", "ce qui a"],
-    "tr": ["nedeniyle", "yüzünden", "bu yüzden", "sonucunda", "neden oldu", "yol açtı", "dolayısıyla", "için"],
+    "tr": ["nedeniyle", "yüzünden", "bu yüzden", "sonucunda", "neden oldu", "yol açtı", "sebep oldu",
+           "dolayısıyla", "sayesinde", "için", "kaynaklandı", "tetikledi"],
 }
 LANG_NAMES = {"en": "English", "de": "German", "nl": "Dutch", "es": "Spanish", "fr": "French", "tr": "Turkish"}
 
@@ -67,15 +71,20 @@ class LLM:
 
     def json(self, prompt: str, max_tokens: int = 1800) -> object:
         for attempt in range(6):
-            r = self.c.post("/chat/completions", json={
+            body = {
                 "model": self.model, "temperature": 0.9, "max_tokens": max_tokens,
                 "messages": [{"role": "system", "content": "Reply with JSON only. No prose, no markdown fences."},
-                             {"role": "user", "content": prompt}]})
+                             {"role": "user", "content": prompt}]}
+            if "gpt-oss" in self.model:
+                body["reasoning_effort"] = "low"   # reasoning tokens otherwise eat the budget -> empty content
+            r = self.c.post("/chat/completions", json=body)
             if r.status_code == 429:
                 time.sleep(float(r.headers.get("retry-after", 2 * (attempt + 1)))); continue
             r.raise_for_status()
             text = (r.json()["choices"][0]["message"].get("content") or "").strip()
             text = text.split("</think>", 1)[-1].strip()
+            if not text:
+                max_tokens = min(max_tokens * 2, 8000); time.sleep(1); continue
             text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
             self.last_raw = text
             try:
@@ -92,12 +101,26 @@ class LLM:
         raise RuntimeError(f"LLM did not return JSON; last reply started: {self.last_raw[:200]!r}")
 
 
+# English clauses embed unchanged ("because the child spilled juice"); in German,
+# Turkish, Dutch etc. a finite clause changes word order or inflection inside a
+# sentence, so the verbatim rule would reject almost everything. For those
+# languages the phrases are NOMINALISED events (noun phrases), which drop into any
+# position unchanged and are the natural news/report style anyway.
+PHRASE_FORM = {
+    "en": "a short self-contained event clause (4-10 words) that reads naturally after the word 'because': "
+          "include articles and a subject with a verb (e.g. 'the child spilled juice on the carpet')",
+}
+PHRASE_FORM_NOMINAL = ("a short NOUN PHRASE naming the event (3-8 words), so it can be inserted unchanged anywhere "
+                       "in a sentence: nominalise the verb (e.g. German 'der Ausfall des Servers am Montag', "
+                       "Turkish 'sunucunun pazartesi çökmesi', Dutch 'de storing van de server op maandag')")
+
+
 def seed_pairs(llm: LLM, domain: str, n: int, lang: str) -> list[dict]:
+    form = PHRASE_FORM.get(lang, PHRASE_FORM_NOMINAL)
     prompt = (
         f"Write {n} realistic cause -> effect event pairs from {DOMAINS[domain]}, in {LANG_NAMES[lang]}. "
-        "Each side is a short self-contained event clause (4-10 words) that reads naturally after the word "
-        "'because': include articles and a subject with a verb (e.g. 'the child spilled juice on the carpet'), "
-        "lowercase except proper nouns, no pronouns, no trailing period. Vary subjects, avoid repeating nouns. "
+        f"Each side is {form}. Use the language's normal capitalisation rules, no pronouns, no trailing period. "
+        "Vary subjects, avoid repeating nouns. "
         'Return a JSON list of objects {"cause": "...", "effect": "..."}.'
     )
     out = llm.json(prompt)
@@ -115,7 +138,8 @@ def realize(llm: LLM, pairs: list[dict], per_pair: int, lang: str) -> list[dict]
     prompt = (
         f"For each item write {per_pair} different natural {LANG_NAMES[lang]} sentences (one sentence each, 10-30 words) "
         "stating that the cause led to the effect. HARD RULE: the sentence must contain the cause text and the "
-        "effect text EXACTLY as given, character for character (same words, same order, same case), each exactly once. "
+        "effect text EXACTLY as given, character for character (same words, same order, same case, no inflection "
+        "changes), each exactly once. Build the sentence around the phrases as fixed blocks. "
         "Vary the construction: sometimes effect first, sometimes cause first; use different connectives "
         "(because, due to, led to, so, resulted in, as a result, since, thanks to, forced, in order to, which caused); "
         "sometimes no connective at all (implicit). Never use merely temporal words (after, when, then, while) as the "
