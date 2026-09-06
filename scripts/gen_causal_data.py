@@ -32,7 +32,37 @@ DOMAINS = {
     "business": "company operations, sales, suppliers, contracts, hiring, budgets",
     "personal": "everyday life, travel, appointments, preferences, household, health habits",
     "news": "economy, environment, politics, industry, public infrastructure",
+    "health": "medicine, symptoms, treatments, fitness, nutrition, hospitals",
+    "finance": "personal finance, markets, loans, payments, taxes, pricing",
+    "logistics": "shipping, warehouses, delays, suppliers, transport, inventory",
+    "science": "experiments, lab equipment, measurements, materials, climate",
+    "research": "academic research, papers, grants, datasets, peer review",
 }
+
+# Text registers an agent actually stores: not only tidy prose.
+REGISTERS = {
+    "prose":   "a plain written sentence, like a report or an article",
+    "chat":    "an informal chat or Slack message: contractions, lowercase start allowed, maybe an emoji or 'tbh', no hashtags",
+    "note":    "a terse incident or meeting note: fragments, abbreviations, a timestamp or ticket id somewhere",
+    "firstperson": "a first-person statement from someone's own day ('I ...', 'we ...', 'my ...')",
+    "qa":      "a question followed by its answer in the same line, e.g. 'Why did X happen? Because Y.'",
+    "email":   "one sentence from a polite work email",
+    "log":     "a log line or alert text: prefixed with a level or timestamp, terse",
+}
+# Extra causal phrasings that a plain 'because' corpus under-represents (all causal per CNC):
+# Styles whose wording only works when the phrases are noun phrases ("prevented the
+# outage", "in order to reduce latency"); clause phrases would come out ungrammatical.
+NOMINAL_ONLY_STYLES = {4, 5}   # indices into CAUSAL_STYLES: prevention/enablement, purpose
+CAUSAL_STYLES = [
+    "explicit connective, cause first",
+    "explicit connective, effect first (e.g. 'X resulted from Y', 'X was due to Y', 'X, because Y')",
+    "implicit: no connective at all, causality understood from the two clauses",
+    "hedged or partial causation ('partly because', 'probably due to', 'contributed to', 'may have caused')",
+    "prevention or enablement ('prevented', 'stopped', 'allowed', 'made it possible')",
+    "purpose ('in order to', 'so that', 'to be able to')",
+    "with a temporal detail as context but a causal link as the connection (e.g. 'On Monday ... because ...')",
+    "with numbers or a named entity added as context (a percentage, a date, a product or person name)",
+]
 
 # Connective lexicon with the direction it implies. Matched as a signal span when
 # present between/around the argument phrases. Purpose ("in order to") follows CNC:
@@ -115,8 +145,11 @@ PHRASE_FORM_NOMINAL = ("a short NOUN PHRASE naming the event (3-8 words), so it 
                        "Turkish 'sunucunun pazartesi çökmesi', Dutch 'de storing van de server op maandag')")
 
 
-def seed_pairs(llm: LLM, domain: str, n: int, lang: str) -> list[dict]:
-    form = PHRASE_FORM.get(lang, PHRASE_FORM_NOMINAL)
+def seed_pairs(llm: LLM, domain: str, n: int, lang: str, form_name: str = "auto") -> list[dict]:
+    if form_name == "nominal" or lang not in PHRASE_FORM:
+        form, form_name = PHRASE_FORM_NOMINAL, "nominal"
+    else:
+        form, form_name = PHRASE_FORM[lang], "clause"
     prompt = (
         f"Write {n} realistic cause -> effect event pairs from {DOMAINS[domain]}, in {LANG_NAMES[lang]}. "
         f"Each side is {form}. Use the language's normal capitalisation rules, no pronouns, no trailing period. "
@@ -128,38 +161,137 @@ def seed_pairs(llm: LLM, domain: str, n: int, lang: str) -> list[dict]:
     for p in out if isinstance(out, list) else out.get("pairs", []):
         c, e = (p.get("cause") or "").strip().rstrip("."), (p.get("effect") or "").strip().rstrip(".")
         if 2 <= len(c.split()) <= 12 and 2 <= len(e.split()) <= 12 and c.lower() != e.lower():
-            pairs.append({"cause": c, "effect": e, "domain": domain, "lang": lang})
+            pairs.append({"cause": c, "effect": e, "domain": domain, "lang": lang, "form": form_name})
     return pairs
 
 
 def realize(llm: LLM, pairs: list[dict], per_pair: int, lang: str) -> list[dict]:
-    """Ask for sentences containing both phrases verbatim; keep only exact hits."""
-    items = [{"id": i, "cause": p["cause"], "effect": p["effect"]} for i, p in enumerate(pairs)]
+    """Ask for sentences containing both phrases verbatim; keep only exact hits.
+    Each realisation gets a random register and causal style so the corpus is not
+    one flavour of prose."""
+    items = []
+    for i, p in enumerate(pairs):
+        for k in range(per_pair):
+            styles = [s for j, s in enumerate(CAUSAL_STYLES) if p.get("form") == "nominal" or j not in NOMINAL_ONLY_STYLES]
+            items.append({"id": i, "k": k, "cause": p["cause"], "effect": p["effect"],
+                          "register": random.choice(list(REGISTERS)), "style": random.choice(styles)})
+    reg_desc = "; ".join(f"{k}: {v}" for k, v in REGISTERS.items())
     prompt = (
-        f"For each item write {per_pair} different natural {LANG_NAMES[lang]} sentences (one sentence each, 10-30 words) "
-        "stating that the cause led to the effect. HARD RULE: the sentence must contain the cause text and the "
-        "effect text EXACTLY as given, character for character (same words, same order, same case, no inflection "
-        "changes), each exactly once. Build the sentence around the phrases as fixed blocks. "
-        "Vary the construction: sometimes effect first, sometimes cause first; use different connectives "
-        "(because, due to, led to, so, resulted in, as a result, since, thanks to, forced, in order to, which caused); "
-        "sometimes no connective at all (implicit). Never use merely temporal words (after, when, then, while) as the "
-        "only link. Keep the cause as the cause: do not swap the direction. Add realistic context words around them.\n"
+        f"For each item write ONE natural {LANG_NAMES[lang]} text (8-35 words) stating that the cause led to the "
+        "effect, in the requested register and causal style. HARD RULE: the text must contain the cause text and "
+        "the effect text EXACTLY as given, character for character (same words, same order, same case, no "
+        "inflection changes), each exactly once. Build the text around the phrases as fixed blocks. Never use merely "
+        "temporal words (after, when, then, while) as the only link. Keep the cause as the cause.\n"
+        f"Registers: {reg_desc}\n"
         f"Items: {json.dumps(items, ensure_ascii=False)}\n"
-        'Return a JSON list of objects {"id": <item id>, "sentence": "..."}.'
+        'Return a JSON list of objects {"id": <item id>, "k": <k>, "sentence": "..."}.'
     )
-    out = llm.json(prompt, max_tokens=3500)
+    out = llm.json(prompt, max_tokens=4500)
     rows = []
+    by_key = {(it["id"], it["k"]): it for it in items}
     for o in out if isinstance(out, list) else out.get("sentences", []):
         try:
+            it = by_key[(int(o["id"]), int(o.get("k", 0)))]
             p = pairs[int(o["id"])]
         except (KeyError, ValueError, IndexError, TypeError):
             continue
         s = (o.get("sentence") or "").strip()
         row = verify(s, p["cause"], p["effect"], lang)
         if row:
-            row.update({"domain": p["domain"], "lang": lang, "kind": "causal"})
+            row.update({"domain": p["domain"], "lang": lang, "kind": "causal", "form": p.get("form"),
+                        "register": it["register"], "style": it["style"]})
             rows.append(row)
     return rows
+
+
+def chains(llm: LLM, pairs: list[dict], lang: str) -> list[dict]:
+    """Two-relation texts A -> B -> C built from pairs that share a phrase, or from a
+    pair plus a fresh consequence. Emitted as CNC does it: one row per relation with
+    the same text (num_rs=2)."""
+    items = []
+    for i, p in enumerate(pairs):
+        items.append({"id": i, "a": p["cause"], "b": p["effect"]})
+    prompt = (
+        f"For each item, first invent a plausible further consequence c of b (a short {LANG_NAMES[lang]} "
+        "phrase in the same form as a and b), then write ONE natural text (15-40 words, one or two sentences) "
+        "stating that a led to b and b led to c. HARD RULE: a, b and c must each appear EXACTLY as given, once. "
+        "Use two different connectives or one implicit link.\n"
+        f"Items: {json.dumps(items, ensure_ascii=False)}\n"
+        'Return a JSON list of objects {"id": <id>, "c": "...", "sentence": "..."}.'
+    )
+    out = llm.json(prompt, max_tokens=4000)
+    rows = []
+    for o in out if isinstance(out, list) else out.get("items", []):
+        try:
+            p = pairs[int(o["id"])]
+        except (KeyError, ValueError, IndexError, TypeError):
+            continue
+        s, c = (o.get("sentence") or "").strip(), (o.get("c") or "").strip().rstrip(".")
+        if not c or s.count(c) != 1:
+            continue
+        r1 = verify(s, p["cause"], p["effect"], lang)
+        r2 = verify(s, p["effect"], c, lang)
+        if r1 and r2:
+            for r, rel in ((r1, 1), (r2, 2)):
+                r.update({"domain": p["domain"], "lang": lang, "kind": "causal", "register": "prose",
+                          "style": "chain", "num_rs": 2, "rel": rel})
+                rows.append(r)
+    return rows
+
+
+def plain_facts(llm: LLM, domain: str, n: int, lang: str) -> list[dict]:
+    """Non-causal facts of the kind agents store most (the gate must stay quiet)."""
+    prompt = (
+        f"Write {n} varied {LANG_NAMES[lang]} statements from {DOMAINS[domain]} that an assistant might remember: "
+        "preferences, states, schedules, numbers, decisions, descriptions. Mix registers (chat, note, prose, "
+        "first person, log line). NONE may express or imply that one thing caused another, and none may use "
+        "because/due to/led to/so that. 6-30 words each. Return a JSON list of strings."
+    )
+    out = llm.json(prompt, max_tokens=2500)
+    rows = []
+    for s in out if isinstance(out, list) else out.get("items", []):
+        s = str(s).strip()
+        if 5 <= len(s.split()) <= 40:
+            rows.append({"text": s, "cause": None, "effect": None, "a": None, "b": None,
+                         "domain": domain, "lang": lang, "kind": "negative", "register": "mixed", "style": "plain"})
+    return rows
+
+
+_TYPOS = {"the": "teh", "and": "adn", "because": "becuase", "with": "wiht", "their": "thier"}
+
+
+def noise(row: dict, rng: random.Random) -> dict | None:
+    """Span-preserving surface noise (typos outside spans, casing, dropped final period)
+    on a copy of the row; None if nothing could be changed safely."""
+    s = row["text"]
+    protected = [tuple(row["cause_span"]), tuple(row["effect_span"])] if row["kind"] == "causal" else []
+    if row.get("signal_span"):
+        protected.append(tuple(row["signal_span"]))
+    words = list(re.finditer(r"\b\w+\b", s))
+    free = [m for m in words if not any(a <= m.start() < b for a, b in protected)]
+    if not free:
+        return None
+    m = rng.choice(free)
+    w = m.group(0)
+    if w.lower() in _TYPOS:
+        repl = _TYPOS[w.lower()]
+    elif len(w) > 4:
+        i = rng.randrange(1, len(w) - 1); repl = w[:i] + w[i + 1] + w[i] + w[i + 2:]
+    else:
+        repl = w.upper() if rng.random() < 0.5 else w.lower()
+    delta = len(repl) - len(w)
+    new = s[:m.start()] + repl + s[m.end():]
+    if rng.random() < 0.3 and new.endswith("."):
+        new = new[:-1]
+    shift = lambda span: [span[0] + (delta if span[0] > m.start() else 0), span[1] + (delta if span[1] > m.start() else 0)]  # noqa: E731
+    out = dict(row, text=new, style=row.get("style", "") + "+noise")
+    if row["kind"] == "causal":
+        out["cause_span"], out["effect_span"] = shift(row["cause_span"]), shift(row["effect_span"])
+        if row.get("signal_span"):
+            out["signal_span"] = shift(row["signal_span"])
+        if new[out["cause_span"][0]:out["cause_span"][1]] != row["cause"] or new[out["effect_span"][0]:out["effect_span"][1]] != row["effect"]:
+            return None
+    return out
 
 
 def verify(sentence: str, cause: str, effect: str, lang: str) -> dict | None:
@@ -190,14 +322,16 @@ def causal_check(llm: LLM, rows: list[dict], lang: str) -> list[dict]:
         chunk = rows[i:i + 15]
         items = [{"id": j, "sentence": r["text"], "a": r.get("cause") or r.get("a"), "b": r.get("effect") or r.get("b")}
                  for j, r in enumerate(chunk)]
-        prompt = ("For each sentence decide: does it assert that one of the two phrases caused, led to, enabled or "
-                  "was done in order to bring about the other (purpose counts as causal; mere sequence, "
-                  "correlation, conditionals and negated causation do not)? If yes, which phrase is the CAUSE?\n"
+        prompt = ("For each sentence decide: (1) does it assert that one of the two phrases caused, led to, enabled "
+                  "or was done in order to bring about the other (purpose counts as causal; mere sequence, "
+                  "correlation, conditionals and negated causation do not)? If yes, which phrase is the CAUSE? "
+                  "(2) Is the text grammatical and natural for its register (chat and notes may be terse, but no "
+                  "broken syntax like 'made it possible the meeting started')?\n"
                   f"Items: {json.dumps(items, ensure_ascii=False)}\n"
-                  'Return a JSON list of objects {"id": <id>, "causal": true|false, "cause": "a"|"b"|null}.')
+                  'Return a JSON list of objects {"id": <id>, "causal": true|false, "cause": "a"|"b"|null, "grammatical": true|false}.')
         try:
             out = llm.json(prompt, max_tokens=1500)
-            verdict = {int(o["id"]): (bool(o.get("causal")), o.get("cause"))
+            verdict = {int(o["id"]): (bool(o.get("causal")), o.get("cause"), o.get("grammatical", True))
                        for o in (out if isinstance(out, list) else out.get("items", []))}
         except Exception:
             keep += chunk; continue
@@ -205,7 +339,9 @@ def causal_check(llm: LLM, rows: list[dict], lang: str) -> list[dict]:
             v = verdict.get(j)
             if v is None:
                 keep.append(r); continue
-            is_causal, cause_side = v
+            is_causal, cause_side, ok_grammar = v
+            if not ok_grammar:
+                continue
             if r["kind"] == "causal" and is_causal and cause_side in (None, "a"):
                 keep.append(r)          # agrees, and direction not contradicted
             elif r["kind"] == "negative" and not is_causal:
@@ -256,6 +392,9 @@ def main() -> None:
     ap.add_argument("--pairs", type=int, default=20, help="seed pairs per domain per language")
     ap.add_argument("--per-pair", type=int, default=2)
     ap.add_argument("--negatives", type=float, default=0.3, help="fraction of pairs also realised as non-causal")
+    ap.add_argument("--chains", type=float, default=0.15, help="fraction of pairs extended into a two-relation text")
+    ap.add_argument("--plain", type=int, default=10, help="plain non-causal facts per domain per language")
+    ap.add_argument("--noise", type=float, default=0.15, help="fraction of causal rows duplicated with surface noise")
     ap.add_argument("--out", default="data/synth")
     ap.add_argument("--seed", type=int, default=7)
     args = ap.parse_args()
@@ -266,7 +405,10 @@ def main() -> None:
     rows, stats = [], {"pairs": 0, "asked": 0, "accepted": 0, "neg_asked": 0, "neg_accepted": 0}
     for lang in args.langs.split(","):
         for domain in args.domains.split(","):
-            pairs = seed_pairs(llm, domain, args.pairs, lang)
+            if lang in PHRASE_FORM:
+                pairs = seed_pairs(llm, domain, args.pairs // 2, lang, "clause") + seed_pairs(llm, domain, args.pairs - args.pairs // 2, lang, "nominal")
+            else:
+                pairs = seed_pairs(llm, domain, args.pairs, lang)
             stats["pairs"] += len(pairs)
             for i in range(0, len(pairs), 10):
                 chunk = pairs[i:i + 10]
@@ -276,6 +418,13 @@ def main() -> None:
             for i in range(0, len(neg_pairs), 10):
                 got = negatives(llm, neg_pairs[i:i + 10], lang)
                 stats["neg_asked"] += len(neg_pairs[i:i + 10]); stats["neg_accepted"] += len(got); rows += got
+            chain_pairs = random.sample(pairs, max(1, int(len(pairs) * args.chains))) if pairs else []
+            for i in range(0, len(chain_pairs), 8):
+                got = chains(llm, chain_pairs[i:i + 8], lang)
+                stats["chain_rows"] = stats.get("chain_rows", 0) + len(got); rows += got
+            if args.plain:
+                got = plain_facts(llm, domain, args.plain, lang)
+                stats["plain_facts"] = stats.get("plain_facts", 0) + len(got); rows += got
     before = len(rows)
     rows = causal_check(llm, rows, "en")
     stats["qa_dropped"] = before - len(rows)
@@ -295,12 +444,28 @@ def main() -> None:
         w = csv.writer(f); w.writerow(["index", "text", "text_w_pairs", "num_rs", "lang", "domain", "pair_id"])
         for i, r in enumerate(final):
             twp = to_text_w_pairs(r) if r["kind"] == "causal" else r["text"]
-            w.writerow([i, r["text"], twp, 1 if r["kind"] == "causal" else 0, r["lang"], r["domain"], r["pair_id"]])
+            w.writerow([i, r["text"], twp, r.get("num_rs", 1) if r["kind"] == "causal" else 0, r["lang"], r["domain"], r["pair_id"]])
+    rng = random.Random(args.seed)
+    noised = [n for n in (noise(r, rng) for r in final if r["kind"] == "causal" and rng.random() < args.noise) if n]
+    final += noised
     stats["final"] = len(final)
+    stats["noised"] = len(noised)
     stats["with_signal"] = sum(1 for r in final if r.get("signal_span"))
+    # distribution report: this is how you judge variation
+    from collections import Counter
+    causal_rows = [r for r in final if r["kind"] == "causal"]
+    stats["registers"] = dict(Counter(r.get("register", "?") for r in causal_rows))
+    stats["styles"] = dict(Counter((r.get("style") or "").replace("+noise", "")[:32] for r in causal_rows))
+    stats["cause_first"] = sum(1 for r in causal_rows if r["cause_span"][0] < r["effect_span"][0])
+    stats["effect_first"] = len(causal_rows) - stats["cause_first"]
+    stats["implicit_no_signal"] = sum(1 for r in causal_rows if not r.get("signal_span"))
+    stats["negatives_shared_phrase"] = sum(1 for r in final if r["kind"] == "negative" and r.get("a"))
+    stats["negatives_plain"] = sum(1 for r in final if r["kind"] == "negative" and not r.get("a"))
+    stats["len_words_p10_p50_p90"] = [sorted(len(r["text"].split()) for r in final)[int(q * (len(final) - 1))] for q in (0.1, 0.5, 0.9)]
     print(json.dumps(stats, indent=1))
-    for r in random.sample(final, min(8, len(final))):
-        print(f"[{r['kind']:8}] {to_text_w_pairs(r) if r['kind']=='causal' else r['text']}")
+    for r in random.sample(final, min(12, len(final))):
+        tag = f"{r['kind']:8} {r.get('register','')[:6]:6} {(r.get('style') or '')[:18]:18}"
+        print(f"[{tag}] {to_text_w_pairs(r) if r['kind']=='causal' else r['text']}")
 
 
 if __name__ == "__main__":
