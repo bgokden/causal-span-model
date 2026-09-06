@@ -302,6 +302,13 @@ def verify(sentence: str, cause: str, effect: str, lang: str) -> dict | None:
     ci, ei = sentence.index(cause), sentence.index(effect)
     if not (ci + len(cause) <= ei or ei + len(effect) <= ci):
         return None
+    # Word-aligned boundaries: the trainer splits on spaces, so a phrase glued to a
+    # bracket or quote ("(the outage") would drag that character into the span.
+    for start, end in ((ci, ci + len(cause)), (ei, ei + len(effect))):
+        if start > 0 and not sentence[start - 1].isspace():
+            return None
+        if end < len(sentence) and (sentence[end].isalnum() or sentence[end] in "'\u2019"):
+            return None
     # signal: longest lexicon connective outside both argument spans (case-insensitive)
     low = sentence.lower()
     sig = None

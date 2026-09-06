@@ -89,7 +89,12 @@ def train(train_csv, dev_csv, output_dir, base_model="microsoft/mdeberta-v3-base
           epochs=10, lr=3e-5, batch_size=16, max_len=256, seed=42,
           warmup_ratio=0.06, dropout=0.1, extra_csvs=None, neg_csv=None):
     set_seed(seed)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        device = "mps"   # Apple Silicon; DeBERTa ops not on Metal fall back to CPU automatically
+    else:
+        device = "cpu"
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     pad_id = tokenizer.pad_token_id
 
