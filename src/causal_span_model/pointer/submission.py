@@ -58,7 +58,10 @@ def _tagged(words, word_ids, relation):
     return " ".join(out)
 
 
-def predict_sentence(model, tokenizer, text, max_len=256, topk=5, device="cpu"):
+def predict_sentence(model, tokenizer, text, max_len=256, topk=5, device="cpu", gate=True):
+    """Tag one sentence. With ``gate`` (default) the causal/non-causal head decides first:
+    a non-causal verdict returns the untagged sentence, so hard negatives pay off at
+    inference. Pass ``gate=False`` to reproduce the ungated CNC submission behaviour."""
     words = str(text).split(" ")
     enc = tokenizer(words, is_split_into_words=True, truncation=True,
                     max_length=max_len, return_tensors="pt")
@@ -69,6 +72,9 @@ def predict_sentence(model, tokenizer, text, max_len=256, topk=5, device="cpu"):
     length = enc["input_ids"].shape[1]
     logits = {k: out[k][0].cpu() for k in
               ("cause_start", "cause_end", "effect_start", "effect_end", "sig_start", "sig_end")}
+    if gate and "causal_cls" in out and int(out["causal_cls"][0].argmax().item()) == 0:
+        plain = " ".join(words)
+        return [plain, plain]
     has_signal = bool(out["signal_cls"][0].argmax().item())
     relations = decode_relations(logits, sep_pos=length - 1, has_signal=has_signal,
                                  beam=True, topk=topk)
@@ -85,6 +91,8 @@ def main(argv=None):
     parser.add_argument("out_json")
     parser.add_argument("--max-len", type=int, default=256)
     parser.add_argument("--topk", type=int, default=5)
+    parser.add_argument("--no-gate", action="store_true",
+                        help="skip the causal/non-causal gate (ungated CNC submission behaviour)")
     args = parser.parse_args(argv)
 
     import pandas as pd  # CLI-only (submission scoring); kept out of the inference import path
@@ -95,7 +103,8 @@ def main(argv=None):
     df = pd.read_csv(args.ref_csv)
     with open(args.out_json, "w", encoding="utf-8") as handle:
         for position, (_, row) in enumerate(df.iterrows()):
-            preds = predict_sentence(model, tokenizer, row["text"], args.max_len, args.topk, device)
+            preds = predict_sentence(model, tokenizer, row["text"], args.max_len, args.topk, device,
+                                     gate=not args.no_gate)
             handle.write(json.dumps({"index": position, "prediction": preds}, ensure_ascii=False) + "\n")
     print(f"wrote {args.out_json} ({len(df)} sentences)")
     return 0

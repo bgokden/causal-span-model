@@ -52,12 +52,16 @@ def main() -> None:
     ap.add_argument("--dev", type=float, default=0.08)
     ap.add_argument("--test", type=float, default=0.08)
     ap.add_argument("--seed", type=int, default=13)
+    ap.add_argument("--langs", default="", help="comma list, e.g. en or en,de; empty = all languages")
     args = ap.parse_args()
     rng = random.Random(args.seed)
     rows = load_chunks(args.chunks)
     # global dedupe (chunks from different providers may overlap)
+    langs = {x.strip() for x in args.langs.split(",") if x.strip()}
     seen, uniq = set(), []
     for r in rows:
+        if langs and r.get("lang", "en") not in langs:
+            continue
         key = hashlib.sha1(" ".join(r["text"].lower().split()).encode()).hexdigest()
         if key in seen:
             continue
