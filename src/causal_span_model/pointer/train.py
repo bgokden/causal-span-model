@@ -87,7 +87,8 @@ def _save(model, tokenizer, output_dir, base_model, dropout):
 
 def train(train_csv, dev_csv, output_dir, base_model="microsoft/mdeberta-v3-base",
           epochs=10, lr=3e-5, batch_size=16, max_len=256, seed=42,
-          warmup_ratio=0.06, dropout=0.1, extra_csvs=None, neg_csv=None):
+          warmup_ratio=0.06, dropout=0.1, extra_csvs=None, neg_csv=None,
+          swap_augment=0, swap_grammar_qa=True):
     set_seed(seed)
     if torch.cuda.is_available():
         device = "cuda"
@@ -98,9 +99,18 @@ def train(train_csv, dev_csv, output_dir, base_model="microsoft/mdeberta-v3-base
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     pad_id = tokenizer.pad_token_id
 
-    train_rels = relations_from_csv(train_csv)
+    cnc_rels = relations_from_csv(train_csv)
+    train_rels = list(cnc_rels)
     for extra in extra_csvs or []:
         train_rels.extend(relations_from_csv(extra))
+    if swap_augment > 0:
+        from .augment import LLMGrammar, swap_augment as _swap
+        grammar_check = LLMGrammar() if swap_grammar_qa else None
+        # swap only within the CNC (English) train sentences -- cross-lingual swaps are junk
+        aug = _swap(cnc_rels, swap_augment, seed=seed, grammar_check=grammar_check)
+        print(f"[pointer-train] swap-augment added {len(aug)} sentences "
+              f"(grammar_qa={swap_grammar_qa})")
+        train_rels.extend(aug)
     train_ex = list(build_dataset(train_rels, tokenizer, max_len))
     negatives = 0
     if neg_csv:
@@ -161,11 +171,16 @@ def main(argv=None):
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--max-len", type=int, default=256)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--swap-augment", type=int, default=0,
+                        help="mint N cause/effect-swapped sentences from same-signal pairs")
+    parser.add_argument("--no-swap-grammar-qa", action="store_true",
+                        help="skip the LLM grammar check on swapped sentences")
     args = parser.parse_args(argv)
     train(args.train, args.dev, args.output_dir, base_model=args.base_model,
           epochs=args.epochs, lr=args.lr, batch_size=args.batch_size,
           max_len=args.max_len, seed=args.seed, extra_csvs=args.extra,
-          neg_csv=args.negatives)
+          neg_csv=args.negatives, swap_augment=args.swap_augment,
+          swap_grammar_qa=not args.no_swap_grammar_qa)
     return 0
 
 
