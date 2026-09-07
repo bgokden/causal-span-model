@@ -173,7 +173,7 @@ def main(argv=None):
         target_modules="all-linear", task_type="CAUSAL_LM")
 
     out_dir = os.path.join(REPO, args.out) if not os.path.isabs(args.out) else args.out
-    cfg = SFTConfig(
+    cfg_kwargs = dict(
         output_dir=out_dir,
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch,
@@ -181,7 +181,6 @@ def main(argv=None):
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.lr,
         lr_scheduler_type="cosine",
-        warmup_ratio=0.03,
         bf16=True,
         max_length=args.max_len,
         completion_only_loss=True,
@@ -197,6 +196,13 @@ def main(argv=None):
         seed=args.seed,
         dataset_num_proc=4,
     )
+    # transformers 5.x dropped warmup_ratio from TrainingArguments (warmup_steps only)
+    import inspect
+    if "warmup_ratio" in inspect.signature(SFTConfig.__init__).parameters:
+        cfg_kwargs["warmup_ratio"] = 0.03
+    else:
+        cfg_kwargs["warmup_steps"] = 50
+    cfg = SFTConfig(**cfg_kwargs)
     trainer = SFTTrainer(
         model=model, args=cfg, peft_config=lora,
         train_dataset=split["train"], eval_dataset=split["test"],
