@@ -112,6 +112,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--entity-silver", action="store_true")
+    ap.add_argument("--entity-test-ref", action="store_true",
+                    help="GLiNER over the held-out test split -> entity_test_ref.jsonl (eval reference)")
     ap.add_argument("--conflict-paraphrases", action="store_true")
     ap.add_argument("--per-pair", type=int, default=5)
     ap.add_argument("--limit", type=int, default=None)
@@ -121,6 +123,9 @@ def main(argv=None):
         entity_silver([os.path.join(REPO, "data/prepared/train.csv"),
                        os.path.join(REPO, "data/prepared/negatives.csv")],
                       os.path.join(OUT_DIR, "entity_silver.jsonl"), limit=args.limit)
+    if args.entity_test_ref:
+        entity_silver([os.path.join(REPO, "data/prepared/test.csv")],
+                      os.path.join(OUT_DIR, "entity_test_ref.jsonl"), limit=args.limit)
     if args.conflict_paraphrases:
         conflict_paraphrases(os.path.join(OUT_DIR, "conflict_paraphrases.jsonl"),
                              per_pair=args.per_pair)
