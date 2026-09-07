@@ -72,11 +72,17 @@ def segment(text: str) -> list[tuple[str, int, int]]:
 
 
 def predict_relations(model, tokenizer, text: str, max_len: int = 256,
-                      topk: int = 5, device: str = "cpu") -> list[dict]:
+                      topk: int = 5, device: str = "cpu",
+                      gate_threshold: float = 0.5) -> list[dict]:
     """Return deduplicated ``[{'cause','effect','signal'}]`` for one text, any language.
 
     Spans are sliced from the original text via character offsets, so CJK output has
     no inserted spaces and Latin output keeps original spacing.
+
+    ``gate_threshold`` is the probability of "non-causal" (from the causal gate head)
+    above which the text is treated as non-causal and no relations are returned.
+    0.5 reproduces the argmax gate; higher values make the gate more conservative
+    (fewer abstentions); 1.0 disables it.
     """
     segments = segment(text)
     if not segments:
@@ -90,8 +96,10 @@ def predict_relations(model, tokenizer, text: str, max_len: int = 256,
                     attention_mask=enc["attention_mask"].to(device))
     # Causal gate: if the model has a causal head and predicts non-causal, emit
     # nothing (the span head always produces spans, even on non-causal text).
-    if "causal_cls" in out and int(out["causal_cls"][0].argmax().item()) == 0:
-        return []
+    if "causal_cls" in out and gate_threshold < 1.0:
+        p_non_causal = torch.softmax(out["causal_cls"][0].float(), dim=-1)[0].item()
+        if p_non_causal >= gate_threshold:
+            return []
     length = enc["input_ids"].shape[1]
     logits = {k: out[k][0].cpu() for k in
               ("cause_start", "cause_end", "effect_start", "effect_end", "sig_start", "sig_end")}
