@@ -5,6 +5,8 @@
 #   PROVIDER=groq   LLM_BASE_URL=https://api.groq.com/openai/v1 LLM_API_KEY=... LLM_MODEL=openai/gpt-oss-120b scripts/run_generation.sh en 3 48
 #   PROVIDER=gemini LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai LLM_API_KEY=... LLM_MODEL=gemini-2.5-flash scripts/run_generation.sh en 3 48
 #   PROVIDER=mistral LLM_BASE_URL=https://api.mistral.ai/v1 LLM_API_KEY=... LLM_MODEL=mistral-medium-latest scripts/run_generation.sh en 3 48
+# PYTHON=... picks the interpreter (default: python on PATH; needs httpx). Local models work
+# too, e.g. PROVIDER=local LLM_BASE_URL=http://localhost:11434/v1 LLM_API_KEY=ollama LLM_MODEL=gpt-oss:20b
 # Different providers write different seeds (the seed offset uses the provider name), so
 # their chunks add up instead of duplicating.
 set -uo pipefail
@@ -17,7 +19,7 @@ for r in $(seq 1 "$ROUNDS"); do
     out="data/synth/${LANG_}/${d}-r${r}-${PROVIDER}"
     [ -f "$out/synth.jsonl" ] && continue
     echo "[$(date +%H:%M:%S)] $PROVIDER $LANG_ $d round $r"
-    uv run --project /Users/berk/repos/reasongraph-cloud --no-sync python scripts/gen_causal_data.py \
+    ${PYTHON:-python} scripts/gen_causal_data.py \
       --domains "$d" --langs "$LANG_" --pairs "$PAIRS" --per-pair 3 --negatives 0.35 --chains 0.15 \
       --plain 12 --noise 0.15 --seed $((r * 1000 + poff + ${#d})) --out "$out" 2>&1 | grep -E '"final"|"accepted"|Error|Traceback' | tr '\n' ' '; echo
   done
