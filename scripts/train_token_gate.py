@@ -206,6 +206,84 @@ def gen_contrastive_causal(n, cache_path, batch=10):
     return have[:n]
 
 
+PROCESS_PROMPT = """Generate {n} items in {lang} about physical, natural, engineering, or
+health MECHANISMS -- how one thing physically brings about another (heat, motion, pressure,
+chemistry, biology, ecology, machines, physiology). Each item:
+- "cause": a short phrase naming the cause (3-8 words)
+- "effect": a short phrase naming the effect (3-8 words)
+- "causal": ONE natural sentence stating that the cause brings about the effect, using a
+  physical/process VERB (warms, heats, cools, expands, compresses, pushes, pulls, raises,
+  lowers, increases, reduces, releases, absorbs, traps, dissolves, erodes, strengthens,
+  weakens, damages, triggers, drives, slows, accelerates, produces, forms, evaporates,
+  condenses). Do NOT use the connectives because/since/so/as a result. Both phrases appear.
+- "plain": ONE natural sentence about the SAME subject stating a property, quantity, location,
+  material, or definition with NO causal relation.
+Return a JSON array of {n} objects {{"cause":"...","effect":"...","causal":"...","plain":"..."}}."""
+
+
+def gen_process_causal(n_pos, cache_path, batch=15):
+    """Generate/cache process-causal positives + plain twins via the local LLM, validated by
+    the generator's second-pass causal_check. Idempotent top-up to n_pos positives; keeps at
+    most n_pos//2 plain twins (the rest of the negatives already exist in the G1 data)."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+    from gen_causal_data import LLM, causal_check
+
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    have = _jsonl(cache_path) if os.path.exists(cache_path) else []
+    n_pos_have = sum(1 for r in have if r["label"] == 1)
+    n_neg_have = sum(1 for r in have if r["label"] == 0)
+    if n_pos_have >= n_pos:
+        print(f"process cache has {n_pos_have} pos / {n_neg_have} neg >= {n_pos}; reusing", flush=True)
+        return have
+
+    llm = LLM(os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1"),
+              os.environ.get("LLM_API_KEY", "ollama"),
+              os.environ.get("LLM_MODEL", "gpt-oss:20b"))
+    langs = ["en"] * 5 + ["de", "nl", "es", "fr", "tr"]  # 50% en, 10% each
+    neg_cap = n_pos // 2
+    fh = open(cache_path, "a", encoding="utf-8")
+    li = 0
+    while n_pos_have < n_pos:
+        lang = langs[li % len(langs)]
+        li += 1
+        try:
+            out = llm.json(PROCESS_PROMPT.format(n=batch, lang=LANG_NAMES.get(lang, "English")),
+                           max_tokens=2400)
+        except Exception as exc:
+            print(f"  process batch ({lang}) failed: {exc}", flush=True)
+            continue
+        if not isinstance(out, list):
+            continue
+        rows = []
+        for o in out:
+            if not isinstance(o, dict):
+                continue
+            c = str(o.get("causal", "")).strip()
+            p = str(o.get("plain", "")).strip()
+            cause = str(o.get("cause", "")).strip()
+            effect = str(o.get("effect", "")).strip()
+            if len(c) >= 8 and cause and effect:
+                rows.append({"text": c, "cause": cause, "effect": effect,
+                             "kind": "causal", "lang": lang})
+            if len(p) >= 8 and n_neg_have < neg_cap:
+                rows.append({"text": p, "a": cause, "b": effect,
+                             "kind": "negative", "lang": lang})
+        kept = causal_check(llm, rows, lang)
+        for r in kept:
+            label = 1 if r["kind"] == "causal" else 0
+            rec = {"text": r["text"], "label": label, "lang": r["lang"], "kind": r["kind"]}
+            have.append(rec)
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            if label == 1:
+                n_pos_have += 1
+            else:
+                n_neg_have += 1
+        fh.flush()
+        print(f"  ...{n_pos_have}/{n_pos} process positives, {n_neg_have} plain twins", flush=True)
+    fh.close()
+    return have
+
+
 # ----------------------------------------------------------------------------- model
 
 def score_texts(model, tok, texts, device, batch=128, max_len=96):
@@ -281,6 +359,10 @@ def main(argv=None):
                     help="contrastive (causal, plain-twin) pairs to add; 0 = off")
     ap.add_argument("--contrast-cache",
                     default="~/repos/primaxiom-lab/causal/data/llm/contrastive_causal.jsonl")
+    ap.add_argument("--n-process", type=int, default=0,
+                    help="process/physical-causal positives (+ plain twins) to add; 0 = off")
+    ap.add_argument("--process-cache",
+                    default="~/repos/primaxiom-lab/causal/data/llm/process_causal.jsonl")
     ap.add_argument("--epochs", type=float, default=3.0)
     ap.add_argument("--lr", type=float, default=3e-5)
     ap.add_argument("--batch", type=int, default=64)
@@ -303,12 +385,17 @@ def main(argv=None):
         for r in contrast:
             train.append((r["causal"], 1, r.get("lang", "en"), "contrast"))
             train.append((r["plain"], 0, r.get("lang", "en"), "contrast"))
+    process = []
+    if args.n_process > 0:
+        process = gen_process_causal(args.n_process, os.path.expanduser(args.process_cache))
+        for r in process:
+            train.append((r["text"], int(r["label"]), r.get("lang", "en"), "process"))
     random.Random(args.seed).shuffle(train)
     ytr = np.array([t[1] for t in train])
     ydv = np.array([t[1] for t in dev])
     print(f"train {len(train)} (pos {int(ytr.sum())} / neg {int((1 - ytr).sum())}) "
           f"| dev {len(dev)} (pos {int(ydv.sum())}) | verb-causal {len(verb)} "
-          f"| contrastive pairs {len(contrast)}", flush=True)
+          f"| contrastive pairs {len(contrast)} | process rows {len(process)}", flush=True)
 
     tok = AutoTokenizer.from_pretrained(BASE_MODEL)
     out_dir = os.path.expanduser(args.out)
