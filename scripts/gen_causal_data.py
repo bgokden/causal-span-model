@@ -83,6 +83,25 @@ SIGNALS = {
 }
 LANG_NAMES = {"en": "English", "de": "German", "nl": "Dutch", "es": "Spanish", "fr": "French", "tr": "Turkish"}
 
+# Language purity (lab C3/C4): a non-English row must NOT carry the causal relation with an English
+# connective ("led to", "was due to", "because" inside a German/Spanish/French/Dutch/Turkish sentence).
+# The generator both instructs the model to use a target-language connective AND rejects any non-en row
+# whose text contains one of these English relation-words (whole word / phrase).
+EN_RELATION_WORDS = [
+    "was due to", "due to", "because of", "partly because", r"\bbecause\b", "may have caused", "which caused",
+    r"\bcaused\b", r"\bcausing\b", "led to", "leads to", "resulted in", "resulted from", "result of",
+    "contributed to", r"\bcontributed\b", "in order to", "so that", r"\bprevented\b", r"\bprevents\b",
+    r"\btriggered\b", r"\btriggers\b", r"\ballowed\b", r"\benabled\b", "as a result", r"\btherefore\b",
+    r"\bthus\b", "consequently", "owing to", "thanks to", r"\bso\b", r"\bwith\b", "according to",
+]
+EN_RELATION_RX = re.compile("|".join(EN_RELATION_WORDS), re.I)
+
+
+def has_english_connective(sentence: str, lang: str) -> bool:
+    """True if a non-English sentence carries the relation with an English connective (C4 defect)."""
+    return lang != "en" and bool(EN_RELATION_RX.search(sentence or ""))
+
+
 # Non-causal relations between the SAME two phrases: hard negatives.
 NEGATIVE_KINDS = [
     "purely temporal sequence with no causal link (use 'after', 'before', 'while', 'then')",
@@ -176,12 +195,19 @@ def realize(llm: LLM, pairs: list[dict], per_pair: int, lang: str) -> list[dict]
             items.append({"id": i, "k": k, "cause": p["cause"], "effect": p["effect"],
                           "register": random.choice(list(REGISTERS)), "style": random.choice(styles)})
     reg_desc = "; ".join(f"{k}: {v}" for k, v in REGISTERS.items())
+    lang_rule = ""
+    if lang != "en":
+        ex = ", ".join(f'"{s}"' for s in SIGNALS.get(lang, [])[:8])
+        lang_rule = (f" LANGUAGE RULE: the causal link MUST be a {LANG_NAMES[lang]} connective (e.g. {ex}); "
+                     f"the whole sentence must be natural {LANG_NAMES[lang]} with NO English words -- never use "
+                     f"'because', 'due to', 'led to', 'caused', 'so that', 'in order to', 'resulted in/from', "
+                     f"'contributed to', 'prevented', 'triggered', 'so', 'with' as the link.")
     prompt = (
         f"For each item write ONE natural {LANG_NAMES[lang]} text (8-35 words) stating that the cause led to the "
         "effect, in the requested register and causal style. HARD RULE: the text must contain the cause text and "
         "the effect text EXACTLY as given, character for character (same words, same order, same case, no "
         "inflection changes), each exactly once. Build the text around the phrases as fixed blocks. Never use merely "
-        "temporal words (after, when, then, while) as the only link. Keep the cause as the cause.\n"
+        f"temporal words (after, when, then, while) as the only link. Keep the cause as the cause.{lang_rule}\n"
         f"Registers: {reg_desc}\n"
         f"Items: {json.dumps(items, ensure_ascii=False)}\n"
         'Return a JSON list of objects {"id": <item id>, "k": <k>, "sentence": "..."}.'
@@ -211,11 +237,16 @@ def chains(llm: LLM, pairs: list[dict], lang: str) -> list[dict]:
     items = []
     for i, p in enumerate(pairs):
         items.append({"id": i, "a": p["cause"], "b": p["effect"]})
+    lang_rule = ""
+    if lang != "en":
+        ex = ", ".join(f'"{s}"' for s in SIGNALS.get(lang, [])[:8])
+        lang_rule = (f" LANGUAGE RULE: both causal links MUST be {LANG_NAMES[lang]} connectives (e.g. {ex}); "
+                     f"the whole text must be natural {LANG_NAMES[lang]} with NO English connective words.")
     prompt = (
         f"For each item, first invent a plausible further consequence c of b (a short {LANG_NAMES[lang]} "
         "phrase in the same form as a and b), then write ONE natural text (15-40 words, one or two sentences) "
         "stating that a led to b and b led to c. HARD RULE: a, b and c must each appear EXACTLY as given, once. "
-        "Use two different connectives or one implicit link.\n"
+        f"Use two different connectives or one implicit link.{lang_rule}\n"
         f"Items: {json.dumps(items, ensure_ascii=False)}\n"
         'Return a JSON list of objects {"id": <id>, "c": "...", "sentence": "..."}.'
     )
@@ -297,6 +328,8 @@ def noise(row: dict, rng: random.Random) -> dict | None:
 def verify(sentence: str, cause: str, effect: str, lang: str) -> dict | None:
     if not (8 <= len(sentence.split()) <= 40):
         return None
+    if has_english_connective(sentence, lang):
+        return None                    # C4 reject: no English relation-word in a non-English row
     if sentence.count(cause) != 1 or sentence.count(effect) != 1:
         return None
     ci, ei = sentence.index(cause), sentence.index(effect)

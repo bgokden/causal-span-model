@@ -18,18 +18,35 @@ import glob
 import hashlib
 import json
 import random
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
+# Language purity (lab C3/C4): drop non-English CAUSAL rows whose text carries the relation with an
+# English connective. A load-time filter so re-running never reintroduces the code-mix defect even from
+# old chunks; the generator also rejects these now (scripts/gen_causal_data.py).
+EN_RELATION_WORDS = [
+    "was due to", "due to", "because of", "partly because", r"\bbecause\b", "may have caused", "which caused",
+    r"\bcaused\b", r"\bcausing\b", "led to", "leads to", "resulted in", "resulted from", "result of",
+    "contributed to", r"\bcontributed\b", "in order to", "so that", r"\bprevented\b", r"\bprevents\b",
+    r"\btriggered\b", r"\btriggers\b", r"\ballowed\b", r"\benabled\b", "as a result", r"\btherefore\b",
+    r"\bthus\b", "consequently", "owing to", "thanks to", r"\bso\b", r"\bwith\b", "according to",
+]
+EN_RELATION_RX = re.compile("|".join(EN_RELATION_WORDS), re.I)
 
-def load_chunks(root: str) -> list[dict]:
-    rows = []
+
+def load_chunks(root: str) -> tuple[list[dict], int]:
+    rows, dropped = [], 0
     for f in glob.glob(f"{root}/**/synth.jsonl", recursive=True):
         for line in open(f, encoding="utf-8"):
             r = json.loads(line)
+            if r.get("lang", "en") != "en" and r.get("kind") == "causal" \
+                    and EN_RELATION_RX.search(r.get("text", "") or ""):
+                dropped += 1
+                continue
             r["_chunk"] = f
             rows.append(r)
-    return rows
+    return rows, dropped
 
 
 def to_text_w_pairs(row: dict) -> str:
@@ -55,7 +72,7 @@ def main() -> None:
     ap.add_argument("--langs", default="", help="comma list, e.g. en or en,de; empty = all languages")
     args = ap.parse_args()
     rng = random.Random(args.seed)
-    rows = load_chunks(args.chunks)
+    rows, codemix_dropped = load_chunks(args.chunks)
     # global dedupe (chunks from different providers may overlap)
     langs = {x.strip() for x in args.langs.split(",") if x.strip()}
     seen, uniq = set(), []
@@ -104,7 +121,8 @@ def main() -> None:
             counts[(target, "causal" if causal else "negative")] += 1; i += 1
     for f in files.values():
         f.close()
-    stats = {"raw_rows": len(rows), "unique_rows": len(uniq), "pairs": len(groups),
+    stats = {"raw_rows": len(rows), "codemix_dropped": codemix_dropped,
+             "unique_rows": len(uniq), "pairs": len(groups),
              "counts": {f"{k[0]}/{k[1]}": v for k, v in sorted(counts.items())},
              "langs": dict(Counter(r.get("lang", "en") for r in uniq)),
              "domains": dict(Counter(r.get("domain") for r in uniq)),
