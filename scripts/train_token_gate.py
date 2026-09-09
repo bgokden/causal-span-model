@@ -363,6 +363,11 @@ def main(argv=None):
                     help="process/physical-causal positives (+ plain twins) to add; 0 = off")
     ap.add_argument("--process-cache",
                     default="~/repos/primaxiom-lab/causal/data/llm/process_causal.jsonl")
+    ap.add_argument("--extra-pos", action="append", default=[],
+                    help="jsonl of {text, lang} rows added as positives (repeatable); "
+                         "tag = the file's basename")
+    ap.add_argument("--extra-neg", action="append", default=[],
+                    help="jsonl of {text, lang} rows added as negatives (repeatable)")
     ap.add_argument("--epochs", type=float, default=3.0)
     ap.add_argument("--lr", type=float, default=3e-5)
     ap.add_argument("--batch", type=int, default=64)
@@ -390,6 +395,16 @@ def main(argv=None):
         process = gen_process_causal(args.n_process, os.path.expanduser(args.process_cache))
         for r in process:
             train.append((r["text"], int(r["label"]), r.get("lang", "en"), "process"))
+    for path in args.extra_pos:
+        rows = _jsonl(os.path.expanduser(path))
+        tag = os.path.basename(path).rsplit(".", 1)[0]
+        train += [(str(r["text"]), 1, r.get("lang", "en"), tag) for r in rows if str(r.get("text", "")).strip()]
+        print(f"extra positives {tag}: {len(rows)}", flush=True)
+    for path in args.extra_neg:
+        rows = _jsonl(os.path.expanduser(path))
+        tag = os.path.basename(path).rsplit(".", 1)[0]
+        train += [(str(r["text"]), 0, r.get("lang", "en"), tag) for r in rows if str(r.get("text", "")).strip()]
+        print(f"extra negatives {tag}: {len(rows)}", flush=True)
     random.Random(args.seed).shuffle(train)
     ytr = np.array([t[1] for t in train])
     ydv = np.array([t[1] for t in dev])
