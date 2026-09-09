@@ -30,7 +30,11 @@ EN_RELATION_WORDS = [
     r"\bcaused\b", r"\bcausing\b", "led to", "leads to", "resulted in", "resulted from", "result of",
     "contributed to", r"\bcontributed\b", "in order to", "so that", r"\bprevented\b", r"\bprevents\b",
     r"\btriggered\b", r"\btriggers\b", r"\ballowed\b", r"\benabled\b", "as a result", r"\btherefore\b",
-    r"\bthus\b", "consequently", "owing to", "thanks to", r"\bso\b", r"\bwith\b", "according to",
+    r"\bthus\b", "consequently", "owing to", "thanks to", "according to",
+    # NOT in this list, deliberately: bare "so" and "with". As a permanent load-time filter they
+    # delete legitimate rows -- German "so dass" and the same bare token inside other languages --
+    # while catching almost nothing: of the 931 rows the C4 audit quarantined, only 3 were caught by
+    # these two alone, and 13 German/Dutch rows matched bare "so". Precision over one percent of recall.
 ]
 EN_RELATION_RX = re.compile("|".join(EN_RELATION_WORDS), re.I)
 
