@@ -92,7 +92,9 @@ EN_RELATION_WORDS = [
     r"\bcaused\b", r"\bcausing\b", "led to", "leads to", "resulted in", "resulted from", "result of",
     "contributed to", r"\bcontributed\b", "in order to", "so that", r"\bprevented\b", r"\bprevents\b",
     r"\btriggered\b", r"\btriggers\b", r"\ballowed\b", r"\benabled\b", "as a result", r"\btherefore\b",
-    r"\bthus\b", "consequently", "owing to", "thanks to", r"\bso\b", r"\bwith\b", "according to",
+    r"\bthus\b", "consequently", "owing to", "thanks to", "according to",
+    # bare "so"/"with" left out on purpose: they reject legitimate German ("so dass") at generation
+    # time, and in the C4 audit they were the sole catch for 3 rows out of 931. See prepare_splits.py.
 ]
 EN_RELATION_RX = re.compile("|".join(EN_RELATION_WORDS), re.I)
 
