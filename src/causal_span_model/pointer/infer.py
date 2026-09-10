@@ -22,7 +22,25 @@ _SPAN_EDGE = " \t\n\r.,;:!?"
 # still forced to emit BOTH a cause and an effect, so one argument collapses to the leftover
 # leading token ("The warmed water evaporates into the air." -> effect "The"). Such a relation is
 # dropped. English determiners only (the observed cases); collision-free with content words.
-_DEGENERATE_ARG = {"the", "a", "an", "this", "that", "these", "those"}
+# The collapse is structural (the decoder must emit both sides), so it happens in every language we
+# support, not only the ones the audit sampled. A whole argument that is nothing but an article or a
+# bare demonstrative is garbage in any of them; none of these collide with a content word when they
+# are the ENTIRE argument.
+_DEGENERATE_ARG = {
+    # English
+    "the", "a", "an", "this", "that", "these", "those",
+    # German
+    "der", "die", "das", "den", "dem", "des", "ein", "eine", "einen", "einem", "einer", "eines",
+    "dies", "diese", "dieser", "dieses", "diesem", "diesen",
+    # Dutch
+    "de", "het", "een", "dit", "dat", "deze", "die",
+    # French
+    "le", "la", "les", "l", "un", "une", "des", "ce", "cet", "cette", "ces",
+    # Spanish
+    "el", "los", "las", "una", "unos", "unas", "este", "esta", "estos", "estas", "ese", "esa",
+    # Turkish has no articles; "bir" is the indefinite marker
+    "bir", "bu", "su", "o",
+}
 
 
 def _is_degenerate_arg(span: str) -> bool:

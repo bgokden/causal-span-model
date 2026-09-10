@@ -70,8 +70,12 @@ def test_degenerate_arg_drops_bare_determiner():
 
     for bare in ("The", "the", "a", "an", "This", "those"):
         assert _is_degenerate_arg(bare)
-    for real in ("The added water vapor", "surface", "Throttling performance", "Hypertension"):
-        assert not _is_degenerate_arg(real)
+    # The collapse is structural, so it happens in every language the model handles.
+    for bare in ("Der", "die", "das", "eine", "De", "het", "Le", "les", "une", "El", "una", "bir", "bu"):
+        assert _is_degenerate_arg(bare), bare
+    for real in ("The added water vapor", "surface", "Throttling performance", "Hypertension",
+                 "Der Speicherverbrauch", "la hausse des prix", "het waterverbruik", "bir hata"):
+        assert not _is_degenerate_arg(real), real
 
 
 def test_signal_span_capped_at_five_tokens():
