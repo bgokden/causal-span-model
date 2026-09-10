@@ -17,6 +17,18 @@ from causal_span_model.pointer.decode import decode_relations
 # Sentence punctuation and whitespace stripped from reconstructed span edges only.
 _SPAN_EDGE = " \t\n\r.,;:!?"
 
+# A whole argument that is nothing but a bare determiner is a decode artefact, not a span:
+# on a single-clause sentence (one event, no internal cause->effect) the constrained decoder is
+# still forced to emit BOTH a cause and an effect, so one argument collapses to the leftover
+# leading token ("The warmed water evaporates into the air." -> effect "The"). Such a relation is
+# dropped. English determiners only (the observed cases); collision-free with content words.
+_DEGENERATE_ARG = {"the", "a", "an", "this", "that", "these", "those"}
+
+
+def _is_degenerate_arg(span: str) -> bool:
+    """True for a whole argument that is nothing but a bare determiner (a collapsed span)."""
+    return span.lower() in _DEGENERATE_ARG
+
 
 def _trim_signal(span, signal):
     """Exclude the connective from an argument's boundary (consumer-side cleanup).
@@ -124,6 +136,8 @@ def predict_relations(model, tokenizer, text: str, max_len: int = 256,
         effect = slice_span(_trim_signal(rel["effect"], rel["signal"]))
         if not cause or not effect:
             continue
+        if _is_degenerate_arg(cause) or _is_degenerate_arg(effect):
+            continue  # a bare determiner is a collapsed span, not a real argument
         # Drop beam duplicates. Two kinds arise on single-relation sentences:
         #  - near-dup: same cause, one effect nested in the other (boundary variant)
         #  - flip: a role-swap / direction reversal (this cause == a kept effect and

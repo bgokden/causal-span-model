@@ -62,6 +62,18 @@ def test_segment_whitespace_cjk_and_mixed():
     assert [w for w, _, _ in segment("AI 导致 change")] == ["AI", "导", "致", "change"]
 
 
+def test_degenerate_arg_drops_bare_determiner():
+    # A single-clause sentence forces the decoder to split cause/effect, collapsing one
+    # argument to a bare determiner ("The warmed water evaporates into the air." -> effect "The").
+    # Such a span is a decode artefact, not an argument, and is dropped in predict_relations.
+    from causal_span_model.pointer.infer import _is_degenerate_arg
+
+    for bare in ("The", "the", "a", "an", "This", "those"):
+        assert _is_degenerate_arg(bare)
+    for real in ("The added water vapor", "surface", "Throttling performance", "Hypertension"):
+        assert not _is_degenerate_arg(real)
+
+
 def test_signal_span_capped_at_five_tokens():
     length = 20
     sig_start = _peak(length, 3)
